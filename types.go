@@ -1,4 +1,4 @@
-package logger
+package zapdecor
 
 import (
 	"sync"
@@ -22,14 +22,6 @@ type Logger struct {
 }
 
 type LogLevel int8
-
-type Field struct {
-	Key       string
-	Type      uint8
-	Integer   int64
-	String    string
-	Interface interface{}
-}
 
 type Option struct {
 	zapOption zap.Option

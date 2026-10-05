@@ -1,4 +1,4 @@
-package logger
+package zapdecor
 
 import (
 	"math/rand"

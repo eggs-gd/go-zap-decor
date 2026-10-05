@@ -1,4 +1,4 @@
-package decorators
+package tree
 
 import (
 	"fmt"
@@ -9,7 +9,7 @@ import (
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
 
-	l "github.com/eggs-gd/perceplib/logger"
+	zapdecor "github.com/eggs-gd/go-zap-decor"
 )
 
 const (
@@ -18,9 +18,12 @@ const (
 	TreePipe       = "│ "
 )
 
-type GontrollerDecorator struct{}
+// Decorator: an entry's fields as a tree under its line, an error last in red; a
+// GORM-style SQL entry (fields sql, rows, elapsed) as the rows and the time, then
+// the statement with its keywords, strings and numbers colored
+type Decorator struct{}
 
-func (c *GontrollerDecorator) Decorate(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer {
+func (c *Decorator) Decorate(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer {
 	fields = cleanupFields(fields)
 	if len(fields) == 0 {
 		return buf
@@ -40,7 +43,7 @@ func (c *GontrollerDecorator) Decorate(buf *buffer.Buffer, fields []zapcore.Fiel
 	return buf
 }
 
-func (c *GontrollerDecorator) decorateSQL(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer {
+func (c *Decorator) decorateSQL(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer {
 	var elapsed, rows, sql string
 
 	for _, field := range fields {
@@ -69,7 +72,7 @@ func (c *GontrollerDecorator) decorateSQL(buf *buffer.Buffer, fields []zapcore.F
 	return buf
 }
 
-func (c *GontrollerDecorator) decorateError(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer {
+func (c *Decorator) decorateError(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer {
 	for _, field := range fields {
 		if field.Key == "error" {
 			buf.AppendString(fmt.Sprintf("\033[31m╳ %v\033[0m\n", field.Interface))
@@ -79,7 +82,7 @@ func (c *GontrollerDecorator) decorateError(buf *buffer.Buffer, fields []zapcore
 	return buf
 }
 
-func (c *GontrollerDecorator) decorateDefault(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer {
+func (c *Decorator) decorateDefault(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer {
 	lastIdx := len(fields) - 1
 
 	for i, field := range fields {
@@ -142,14 +145,14 @@ func formatSQL(sql string) string {
 	sql = strings.Join(strings.Fields(sql), " ")
 
 	sql = sqlKeywordRe.ReplaceAllStringFunc(sql, func(s string) string {
-		return l.ColorBrightCyan + strings.ToUpper(s) + l.ColorReset
+		return zapdecor.ColorBrightCyan + strings.ToUpper(s) + zapdecor.ColorReset
 	})
 	sql = sqlStringRe.ReplaceAllStringFunc(sql, func(s string) string {
-		return l.ColorGreen + s + l.ColorReset
+		return zapdecor.ColorGreen + s + zapdecor.ColorReset
 	})
-	sql = sqlNumberRe.ReplaceAllString(sql, ","+l.ColorYellow+"${1}"+l.ColorReset+",")
+	sql = sqlNumberRe.ReplaceAllString(sql, ","+zapdecor.ColorYellow+"${1}"+zapdecor.ColorReset+",")
 	sql = sqlGuidRe.ReplaceAllStringFunc(sql, func(s string) string {
-		return l.ColorBrightMagenta + s + l.ColorReset
+		return zapdecor.ColorBrightMagenta + s + zapdecor.ColorReset
 	})
 
 	return sql

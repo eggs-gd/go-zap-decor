@@ -1,4 +1,8 @@
-package logger
+// Package zapdecor: a colored console logger on zap whose entry fields are written
+// by a decorator of your choice. Each line is the time, the colored level, the
+// logger's name (each named service in its own color) and the message; then the
+// Decorator writes the fields — tree.Decorator as a tree, or your own.
+package zapdecor
 
 import (
 	"fmt"
@@ -12,13 +16,16 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
-type CustomEncoderDecorator interface {
+// Decorator: how an entry's fields are written after its line — the console
+// encoder writes the time, the level, the logger's name and the message, then
+// hands the fields to the decorator (tree.Decorator is one: fields as a tree)
+type Decorator interface {
 	Decorate(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer
 }
 
 type customConsoleEncoder struct {
 	zapcore.Encoder
-	Decorator CustomEncoderDecorator
+	Decorator Decorator
 }
 
 func (c *customConsoleEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore.Field) (*buffer.Buffer, error) {
@@ -31,14 +38,11 @@ func (c *customConsoleEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore
 
 	return decoratedBuf, nil
 }
-func newCustomConsoleEncoder(decorator CustomEncoderDecorator) *customConsoleEncoder {
+func newCustomConsoleEncoder(decorator Decorator) *customConsoleEncoder {
 	encoderConfig := zap.NewDevelopmentEncoderConfig()
 	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	encoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
 		enc.AppendString(t.Format("15:04:05.000"))
-	}
-	encoderConfig.EncodeDuration = func(d time.Duration, enc zapcore.PrimitiveArrayEncoder) {
-		enc.AppendString(ColorCyan + d.String() + ColorReset)
 	}
 	encoderConfig.EncodeDuration = zapcore.StringDurationEncoder
 	encoderConfig.NewReflectedEncoder = func(w io.Writer) zapcore.ReflectedEncoder {
@@ -47,7 +51,9 @@ func newCustomConsoleEncoder(decorator CustomEncoderDecorator) *customConsoleEnc
 	return &customConsoleEncoder{zapcore.NewConsoleEncoder(encoderConfig), decorator}
 }
 
-func NewLogger(level LogLevel, decorator CustomEncoderDecorator, options ...Option) *Logger {
+// NewLogger: a colored console logger to stdout at this level, its fields written
+// by the decorator; Named gives each service its own color
+func NewLogger(level LogLevel, decorator Decorator, options ...Option) *Logger {
 	core := zapcore.NewCore(
 		newCustomConsoleEncoder(decorator),
 		//zapcore.NewConsoleEncoder(encoderConfig),
@@ -78,7 +84,7 @@ func NewLogger(level LogLevel, decorator CustomEncoderDecorator, options ...Opti
 		services:  make(map[string]ServiceConfig),
 		mu:        &sync.RWMutex{},
 	}
-	return logger.Named("App")
+	return logger
 }
 
 func (l *Logger) log(level LogLevel, msg string, fields ...zap.Field) {

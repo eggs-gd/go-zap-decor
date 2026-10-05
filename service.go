@@ -1,4 +1,4 @@
-package logger
+package zapdecor
 
 // RegisterService registers a new service with specified color
 func (l *Logger) RegisterService(name string, color string) {

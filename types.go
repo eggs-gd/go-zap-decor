@@ -1,6 +1,7 @@
 package zapdecor
 
 import (
+	"io"
 	"sync"
 
 	"go.uber.org/zap"
@@ -17,15 +18,21 @@ type ServiceConfig struct {
 // Logger wraps zap logger with additional service management
 type Logger struct {
 	zapLogger *zap.Logger
+	service   string // its own name (Named), plain: the key of its ServiceConfig
 	services  map[string]ServiceConfig
 	mu        *sync.RWMutex
 }
 
 type LogLevel int8
 
+// Option: a zap option, or where the logger writes (Output)
 type Option struct {
 	zapOption zap.Option
+	out       io.Writer
 }
+
+// Output: the logger writes here instead of stdout
+func Output(w io.Writer) Option { return Option{out: w} }
 
 const (
 	DebugLevel  LogLevel = LogLevel(zapcore.DebugLevel)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"sync"
 	"time"
 
@@ -23,22 +24,34 @@ type Decorator interface {
 	Decorate(buf *buffer.Buffer, fields []zapcore.Field) *buffer.Buffer
 }
 
-type customConsoleEncoder struct {
+// encoder: zap's console encoder for the line, the decorator for the fields, then
+// the stack trace — after the fields, not between the line and them
+type encoder struct {
 	zapcore.Encoder
-	Decorator Decorator
+	decorator Decorator
 }
 
-func (c *customConsoleEncoder) EncodeEntry(entry zapcore.Entry, fields []zapcore.Field) (*buffer.Buffer, error) {
-	buf, err := c.Encoder.EncodeEntry(entry, []zapcore.Field{})
+// Clone keeps the decorator (zap clones the encoder for a logger's own fields)
+func (e *encoder) Clone() zapcore.Encoder {
+	return &encoder{Encoder: e.Encoder.Clone(), decorator: e.decorator}
+}
+
+func (e *encoder) EncodeEntry(entry zapcore.Entry, fields []zapcore.Field) (*buffer.Buffer, error) {
+	stack := entry.Stack
+	entry.Stack = ""
+	buf, err := e.Encoder.EncodeEntry(entry, nil)
 	if err != nil {
 		return nil, err
 	}
-
-	decoratedBuf := c.Decorator.Decorate(buf, fields)
-
-	return decoratedBuf, nil
+	buf = e.decorator.Decorate(buf, fields)
+	if stack != "" {
+		buf.AppendString(stack)
+		buf.AppendString("\n")
+	}
+	return buf, nil
 }
-func newCustomConsoleEncoder(decorator Decorator) *customConsoleEncoder {
+
+func newEncoder(decorator Decorator) *encoder {
 	encoderConfig := zap.NewDevelopmentEncoderConfig()
 	encoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	encoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
@@ -48,18 +61,42 @@ func newCustomConsoleEncoder(decorator Decorator) *customConsoleEncoder {
 	encoderConfig.NewReflectedEncoder = func(w io.Writer) zapcore.ReflectedEncoder {
 		return &consoleEncoder{w: w}
 	}
-	return &customConsoleEncoder{zapcore.NewConsoleEncoder(encoderConfig), decorator}
+	return &encoder{Encoder: zapcore.NewConsoleEncoder(encoderConfig), decorator: decorator}
 }
 
-// NewLogger: a colored console logger to stdout at this level, its fields written
-// by the decorator; Named gives each service its own color
+// core: keeps a logger's own fields (With) itself and hands them to the encoder
+// with each entry's — so they reach the decorator too, instead of being written
+// inline by zap's encoder
+type core struct {
+	zapcore.Core
+	fields []zapcore.Field
+}
+
+func (c *core) With(fields []zapcore.Field) zapcore.Core {
+	return &core{Core: c.Core, fields: append(slices.Clone(c.fields), fields...)}
+}
+
+func (c *core) Check(entry zapcore.Entry, checked *zapcore.CheckedEntry) *zapcore.CheckedEntry {
+	if c.Enabled(entry.Level) {
+		return checked.AddCore(entry, c)
+	}
+	return checked
+}
+
+func (c *core) Write(entry zapcore.Entry, fields []zapcore.Field) error {
+	return c.Core.Write(entry, append(slices.Clone(c.fields), fields...))
+}
+
+// NewLogger: a colored console logger at this level (to stdout, or Output), its
+// fields written by the decorator; Named gives each service its own color
 func NewLogger(level LogLevel, decorator Decorator, options ...Option) *Logger {
-	core := zapcore.NewCore(
-		newCustomConsoleEncoder(decorator),
-		//zapcore.NewConsoleEncoder(encoderConfig),
-		zapcore.AddSync(zapcore.Lock(os.Stdout)),
-		zapcore.Level(level),
-	)
+	var out io.Writer = os.Stdout
+	for _, o := range options {
+		if o.out != nil {
+			out = o.out
+		}
+	}
+	core := &core{Core: zapcore.NewCore(newEncoder(decorator), zapcore.Lock(zapcore.AddSync(out)), zapcore.Level(level))}
 
 	stackLevels := []zapcore.Level{
 		zapcore.ErrorLevel,
@@ -88,7 +125,7 @@ func NewLogger(level LogLevel, decorator Decorator, options ...Option) *Logger {
 }
 
 func (l *Logger) log(level LogLevel, msg string, fields ...zap.Field) {
-	if len(l.zapLogger.Name()) > 0 && !l.isServiceEnabled(l.zapLogger.Name()) {
+	if l.service != "" && !l.isServiceEnabled(l.service) {
 		return
 	}
 
@@ -140,13 +177,17 @@ func (l *Logger) Fatal(msg string, fields ...zap.Field) {
 
 func (l *Logger) Named(name string) *Logger {
 	color := getColorForService(name)
-	if _, exists := l.services[name]; !exists {
+	l.mu.RLock()
+	_, exists := l.services[name]
+	l.mu.RUnlock()
+	if !exists {
 		l.RegisterService(name, color)
 	}
 
 	namedLogger := l.zapLogger.Named(fmt.Sprintf("%s%s%s", color, name, ColorReset))
 	return &Logger{
 		zapLogger: namedLogger,
+		service:   name,
 		services:  l.services,
 		mu:        l.mu,
 	}
@@ -155,6 +196,7 @@ func (l *Logger) Named(name string) *Logger {
 func (l *Logger) With(fields ...zap.Field) *Logger {
 	return &Logger{
 		zapLogger: l.zapLogger.With(fields...),
+		service:   l.service,
 		services:  l.services,
 		mu:        l.mu,
 	}
@@ -164,15 +206,18 @@ func (l *Logger) WithOptions(options ...Option) *Logger {
 	zapOptions := convertOptions(options)
 	return &Logger{
 		zapLogger: l.zapLogger.WithOptions(zapOptions...),
+		service:   l.service,
 		services:  l.services,
 		mu:        l.mu,
 	}
 }
 
 func convertOptions(options []Option) []zap.Option {
-	zapOptions := make([]zap.Option, len(options))
-	for i, opt := range options {
-		zapOptions[i] = opt.zapOption
+	var zapOptions []zap.Option
+	for _, opt := range options {
+		if opt.zapOption != nil {
+			zapOptions = append(zapOptions, opt.zapOption)
+		}
 	}
 	return zapOptions
 }

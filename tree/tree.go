@@ -89,28 +89,21 @@ func (c *Decorator) decorateDefault(buf *buffer.Buffer, fields []zapcore.Field) 
 		if field.Key == "error" {
 			continue
 		}
-		value := formatFieldValue(field)
-		if value != "" {
-			prefix := TreeBranch
-			if i == lastIdx {
-				prefix = TreeLastBranch
-			}
-			buf.AppendString(fmt.Sprintf("%s %s: %s\n", prefix, field.Key, value))
+		prefix := TreeBranch
+		if i == lastIdx {
+			prefix = TreeLastBranch
 		}
+		buf.AppendString(fmt.Sprintf("%s %s: %s\n", prefix, field.Key, formatFieldValue(field)))
 	}
 	return buf
 }
 
+// formatFieldValue: the field's value by its type, as zap would encode it — a zero
+// is a value, a duration a duration
 func formatFieldValue(field zapcore.Field) string {
-	switch {
-	case field.String != "":
-		return field.String
-	case field.Integer != 0:
-		return fmt.Sprintf("%d", field.Integer)
-	case field.Interface != nil:
-		return fmt.Sprintf("%v", field.Interface)
-	}
-	return ""
+	enc := zapcore.NewMapObjectEncoder()
+	field.AddTo(enc)
+	return fmt.Sprint(enc.Fields[field.Key])
 }
 
 func cleanupFields(fields []zapcore.Field) []zapcore.Field {
